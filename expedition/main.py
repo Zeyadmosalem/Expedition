@@ -37,6 +37,7 @@ class App:
         self.sprites = pixel_art.Sprites(pg)
         self.audio = Audio(pg, self.settings)
         self._start = time.monotonic()
+        self.visited = []          # screens shown, in order (the self-check reports them)
 
     def now(self):
         return time.monotonic() - self._start
@@ -50,14 +51,17 @@ class App:
         self.settings.save()
 
 
-def run(seed=None):
+def run(seed=None, on_start=None):
     import pygame as pg
     from expedition import title, game
     pg.init()
     try:
         app = App(pg, seed)
+        if on_start is not None:
+            on_start(app)
         screen = 'title'
         while screen != 'quit':
+            app.visited.append(screen)
             if screen == 'title':
                 screen = 'game' if title.run(app) == 'play' else 'quit'
             else:
@@ -66,7 +70,7 @@ def run(seed=None):
         app.records.save()
     finally:
         pg.quit()
-    return 0
+    return app.visited
 
 
 def smoke(logfile):
@@ -87,10 +91,19 @@ def smoke(logfile):
             pg.event.post(pg.event.Event(pg.QUIT))
         return real_flip()
 
+    def no_mouse(app):
+        # The real cursor may hover a menu button and change the selection:
+        # the scripted session must not depend on where the mouse happens to be.
+        pg.event.set_blocked([pg.MOUSEMOTION, pg.MOUSEBUTTONDOWN, pg.MOUSEBUTTONUP])
+        pg.event.clear()           # drop the mouse events already queued when the window opened
+
     pg.display.flip = flip
     try:
-        run(seed=1234)
-        result = f'ok frames={frames[0]}'
+        visited = run(seed=1234, on_start=no_mouse)
+        if 'game' in visited and frames[0] >= 400:
+            result = f'ok frames={frames[0]} screens={",".join(visited)}'
+        else:
+            result = f'error: session ended early, frames={frames[0]} screens={",".join(visited)}'
     except Exception:
         result = 'error\n' + traceback.format_exc()
     finally:
@@ -107,7 +120,8 @@ def main(argv=None):
         logfile = argv[index + 1] if index + 1 < len(argv) else 'smoke.log'
         return smoke(logfile)
     try:
-        return run()
+        run()
+        return 0
     except Exception:
         # Leave a note friends can send back, then let the error surface.
         try:

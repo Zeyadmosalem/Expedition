@@ -1,0 +1,23 @@
+EXPEDITION - how to play
+========================
+
+Start: double-click Expedition.exe in this folder (keep the folder together).
+
+"Windows protected your PC"? The game is not code-signed, so Windows warns the
+first time. Click "More info", then "Run anyway".
+
+Controls
+  W A S D        move
+  Mouse          aim; click or hold to shoot (Space also shoots)
+  R              reload
+  Esc            pause (resume, settings, quit to menu)
+  F1             help        F11  fullscreen
+
+Goal: reach the glowing beacon in each sector. Shoot alien nests before they
+flood the room. Armories hold ammo and health; aliens sometimes drop ammo.
+Out of ammo? Your sidearm never runs dry - it is just slow.
+
+Your settings and records are saved in %APPDATA%\Expedition.
+To remove the game, delete this folder and that one.
+
+If the game ever crashes, please send the file %APPDATA%\Expedition\crash.log.

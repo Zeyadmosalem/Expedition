@@ -86,4 +86,5 @@ def test_smoke_self_check_writes_ok(tmp_path):
     from expedition.main import main
     log = tmp_path / 'smoke.log'
     assert main(['--smoke', str(log)]) == 0
-    assert log.read_text(encoding='utf8').startswith('ok')
+    text = log.read_text(encoding='utf8')
+    assert text.startswith('ok') and 'game' in text
