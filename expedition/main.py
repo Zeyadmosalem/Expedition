@@ -35,6 +35,13 @@ class App:
         self.kit = ui.Kit(pg)
         self.backdrop = ui.Backdrop(pg)
         self.sprites = pixel_art.Sprites(pg)
+        from expedition import photo
+        self.pick_photo = lambda: photo.pick_image_file(pg)      # replaced in tests
+        if self.settings.character == 'photo':
+            head = photo.load_head(pg)
+            if head is None:
+                self.settings.character = 'skull'
+            self.sprites.use_head(head)
         self.audio = Audio(pg, self.settings)
         self._start = time.monotonic()
         self.visited = []          # screens shown, in order (the self-check reports them)

@@ -244,26 +244,33 @@ def skull_head(pg, size=16):
     return add_outline(pg, head)
 
 
+def build_hero(pg, head):
+    """Walk frames for both facings: `head` on the suit body and legs."""
+    body = grid_sprite(pg, BODY)
+    frames = {}
+    for frame, legs in enumerate(LEGS):
+        leg = grid_sprite(pg, legs)
+        hw, hh = head.get_size()
+        width = max(hw, 16) + 2
+        height = hh + len(BODY) + len(legs) - 1
+        canvas = pg.Surface((width, height), pg.SRCALPHA)
+        canvas.blit(leg, ((width - 16) // 2, hh + len(BODY) - 1))
+        canvas.blit(body, ((width - 16) // 2, hh - 1))
+        canvas.blit(head, ((width - hw) // 2, 0))
+        add_outline(pg, canvas)
+        frames[('r', frame)] = canvas
+        frames[('l', frame)] = pg.transform.flip(canvas, True, False)
+    return frames
+
+
 class Sprites:
     """Every Expedition sprite, built once per Pygame session."""
 
     def __init__(self, pg):
         self.pg = pg
-        head = skull_head(pg)
-        body = grid_sprite(pg, BODY)
-        self.hero = {}
-        for frame, legs in enumerate(LEGS):
-            leg = grid_sprite(pg, legs)
-            hw, hh = head.get_size()
-            width = max(hw, 16) + 2
-            height = hh + len(BODY) + len(legs) - 1
-            canvas = pg.Surface((width, height), pg.SRCALPHA)
-            canvas.blit(leg, ((width - 16) // 2, hh + len(BODY) - 1))
-            canvas.blit(body, ((width - 16) // 2, hh - 1))
-            canvas.blit(head, ((width - hw) // 2, 0))
-            add_outline(pg, canvas)
-            self.hero[('r', frame)] = canvas
-            self.hero[('l', frame)] = pg.transform.flip(canvas, True, False)
+        self.hero = build_hero(pg, skull_head(pg))     # title screen and default player
+        self.player = self.hero                        # in-game hero; a photo head can replace the skull here
+
         gun = grid_sprite(pg, GUN, outline=True)
         self.gun = {'r': gun, 'l': pg.transform.flip(gun, True, False)}
         self.aliens = {}
@@ -281,6 +288,10 @@ class Sprites:
         self.nest = grid_sprite(pg, NEST, outline=True)
         self.ammo = grid_sprite(pg, AMMO, outline=True)
         self.health = grid_sprite(pg, HEALTH, outline=True)
+
+    def use_head(self, head):
+        """Use `head` (a small pixel surface) for the in-game hero, or None for the skull."""
+        self.player = self.hero if head is None else build_hero(self.pg, head)
 
 
 def iso_block(pg, height, top, left, right, trim=None, alpha=255, rivets=True):

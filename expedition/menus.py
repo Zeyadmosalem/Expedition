@@ -93,9 +93,38 @@ def settings_screen(app, draw_background):
                 (f'SOUND  {"ON" if s.sound else "OFF"}', 'sound'),
                 (f'FULLSCREEN  {"ON" if s.fullscreen else "OFF"}', 'fullscreen'),
                 (f'SCREEN SHAKE  {"ON" if s.shake else "OFF"}', 'shake'),
+                (f'CHARACTER  {"PHOTO" if s.character == "photo" else "SKULL"}', 'character'),
                 ('BACK', 'back')]
 
-    menu = Menu(app.kit, labels(), 250, width=420)
+    def choose_photo():
+        """Open the file picker and turn the chosen picture into the hero's head."""
+        from expedition import photo
+        was_full = s.fullscreen
+        if was_full:
+            ui.set_fullscreen(pg, False)          # the Windows file window cannot sit over fullscreen
+        try:
+            path = app.pick_photo()
+        finally:
+            if was_full:
+                ui.set_fullscreen(pg, True)
+        if not path:
+            return 'No picture chosen.'
+        try:
+            head = photo.head_from_image(pg, path)
+        except photo.PhotoError as ex:
+            return str(ex)
+        photo.save_head(pg, head)
+        s.character = 'photo'
+        app.sprites.use_head(head)
+        return 'Your photo is now your character (in the game).'
+
+    def use_skull():
+        s.character = 'skull'
+        app.sprites.use_head(None)
+        return 'Back to the skull.'
+
+    message = 'Character: Enter picks a photo, Left goes back to the skull.'
+    menu = Menu(app.kit, labels(), 220, width=420)
     while True:
         app.clock.tick(60)
         t = app.now()
@@ -125,14 +154,30 @@ def settings_screen(app, draw_background):
                 ui.set_fullscreen(pg, s.fullscreen)
             elif key == 'shake':
                 s.shake = not s.shake
+            elif key == 'character':
+                from expedition import photo
+                if direction == 'left':
+                    message = use_skull()
+                elif isinstance(choice, tuple) and photo.load_head(pg) is not None:
+                    s.character = 'photo'                      # Right: back to the saved photo
+                    app.sprites.use_head(photo.load_head(pg))
+                    message = 'Using your saved photo.'
+                else:
+                    message = choose_photo()
             s.save()
             app.audio.refresh()
             app.audio.play('ui_move')
             menu.set_labels(labels())
         draw_background(t)
         app.kit.shade(app.screen, 150)
-        app.kit.glow_text(app.screen, 'SETTINGS', (WIDTH // 2, 150), P['cyan'], 'title', strength=140)
+        app.kit.glow_text(app.screen, 'SETTINGS', (WIDTH // 2, 140), P['cyan'], 'title', strength=140)
         menu.draw(app.screen, t)
+        # live preview of the in-game hero next to the CHARACTER row
+        hero = app.sprites.player[('r', int(t * 8) % 4)]
+        big = pg.transform.scale(hero, (hero.get_width() * 4, hero.get_height() * 4))
+        row = menu.rects[4]
+        app.screen.blit(big, big.get_rect(midleft=(row.right + 30, row.centery)))
+        app.kit.text(app.screen, message, (WIDTH // 2, menu.rects[-1].bottom + 28), P['muted'], 'small', 'center')
         app.kit.chips_row(app.screen, [('Up / Down', 'Choose'), ('Left / Right', 'Change'), ('Esc', 'Back')],
                           HEIGHT - 60)
         app.flip()

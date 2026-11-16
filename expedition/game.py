@@ -348,7 +348,7 @@ def run(app, mode='endless', level=1):
                 world.blit(img, (sx - cx - img.get_width() // 2, sy - cy - img.get_height() + 2))
             elif kind == 'player':
                 facing = 'r' if (p.aim[0] - p.aim[1]) >= 0 else 'l'
-                img = sprites.hero[(facing, int(t * 10) % 4 if p.moving else 0)]
+                img = sprites.player[(facing, int(t * 10) % 4 if p.moving else 0)]
                 x0 = psx - cx - img.get_width() // 2
                 y0 = psy - cy - img.get_height() + 1
                 world.blit(img, (x0, y0))

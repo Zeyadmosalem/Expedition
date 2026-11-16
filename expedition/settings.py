@@ -52,6 +52,7 @@ class Settings:
     fullscreen: bool = False
     shake: bool = True
     seen_tips: bool = False
+    character: str = 'skull'      # 'skull' or 'photo' (the in-game hero's head)
     challenge: float = 0.3        # the director's difficulty, carried between runs
 
     @classmethod
