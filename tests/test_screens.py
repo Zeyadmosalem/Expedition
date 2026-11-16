@@ -109,6 +109,35 @@ def test_window_close_during_play_quits(monkeypatch):
     pg.quit()
 
 
+def test_message_posted_after_the_frame_clock_does_not_crash():
+    """Regression: continuing to the next level builds a map mid-frame, so its
+    message is stamped later than the frame time it is drawn with."""
+    from expedition.ui import Kit, Toasts, PALETTE
+    pg.init()
+    screen = pg.display.set_mode((400, 200))
+    kit = Kit(pg)
+    toasts = Toasts()
+    toasts.push('LEVEL 2  //  HIVE CAVES', PALETTE['cyan'], 3.5, now=10.5)
+    toasts.draw(kit, screen, 200, 20, now=10.0)           # drawn half a second "before" it was posted
+    pg.quit()
+
+
+def test_continuing_to_the_next_level_does_not_crash(monkeypatch):
+    """Clear the tutorial for real, then press Enter to load level 2 mid-frame."""
+    from expedition import game, world
+    app = make_app()
+    orig = world.Expedition.update
+
+    def instant_win(self, dt, **kw):
+        self.player.x, self.player.y = self.map.exit[0] + 0.5, self.map.exit[1] + 0.5
+        return orig(self, dt, **kw)
+
+    monkeypatch.setattr(world.Expedition, 'update', instant_win)
+    count = drive(monkeypatch, 60, {10: pg.K_RETURN, 20: pg.K_RETURN})
+    assert game.run(app, 'campaign', 1) == 'quit' and count[0] >= 60
+    pg.quit()
+
+
 def test_smoke_self_check_writes_ok(tmp_path):
     from expedition.main import main
     log = tmp_path / 'smoke.log'

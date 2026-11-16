@@ -269,7 +269,10 @@ class Toasts:
         self.items = [i for i in self.items if i[3] > now]
         for n, (message, color, start, end) in enumerate(reversed(self.items)):
             age, left = now - start, end - now
-            alpha = 255 * min(1.0, age * 6, left * 3)
+            # A message posted later in the same frame (after a map was built)
+            # has a start time after `now`; never let its fade go below zero.
+            alpha = 255 * max(0.0, min(1.0, age * 6, left * 3))
+            age = max(0.0, age)
             slide = max(0.0, 1 - age * 6) * -12
             surf = kit.render(message, color, 'h2')
             rect = surf.get_rect(midtop=(center_x, y + n * 40 + slide))
