@@ -26,7 +26,7 @@ DOOR = (4, 5)                  # the two door tiles in the middle of a side
 SIDES = ('N', 'E', 'S', 'W')
 OPPOSITE = {'N': 'S', 'S': 'N', 'E': 'W', 'W': 'E'}
 STEP = {'N': (0, -1), 'S': (0, 1), 'E': (1, 0), 'W': (-1, 0)}
-PASSABLE = frozenset('.~ahSE')  # floor, acid, ammo, health, start, exit
+PASSABLE = frozenset('.~ahSEG')  # floor, acid, ammo, health, start, exit, boss gate (open once the boss dies)
 MAX_ASSIGNMENTS = 6000          # budget for one solve; generate_map then tries a new seed
 
 
@@ -65,6 +65,7 @@ TEMPLATES = (
     RoomTemplate('acid', 'hazard', 2),
     RoomTemplate('nest', 'nest', 3),
     RoomTemplate('hive', 'nest', 4),
+    RoomTemplate('lair', 'boss', 3),     # only on boss maps: the room that guards the beacon
 )
 BY_NAME = {t.name: t for t in TEMPLATES}
 
@@ -80,7 +81,8 @@ class Room:
 
 
 class RoomCSP:
-    def __init__(self, rows=4, cols=4, target=0.5, seed=42, impossible=False, start_cell=None, exit_cell=None):
+    def __init__(self, rows=4, cols=4, target=0.5, seed=42, impossible=False, start_cell=None, exit_cell=None,
+                 boss=False):
         if rows < 2 or cols < 2:
             raise ValueError('Need at least a 2x2 room grid')
         self.rows, self.cols, self.n = rows, cols, rows * cols
@@ -89,6 +91,12 @@ class RoomCSP:
         self.stats = CSPStats()
         self.start_cell = 0 if start_cell is None else start_cell
         self.exit_cell = self.n - 1 if exit_cell is None else exit_cell
+        # Boss maps: one neighbour of the beacon room is the lair, and the beacon
+        # room's only door leads into it (unary constraints on both cells).
+        self.boss_cell = None
+        if boss:
+            options = [j for s in SIDES if (j := self.neighbour(self.exit_cell, s)) is not None and j != self.start_cell]
+            self.boss_cell = Random(seed).choice(options)
         self.budget = round(self.target * (self.n - 2) * 1.6) + 1   # +1: the beacon room
         self.budget_lo, self.budget_hi = max(0, self.budget - 2), self.budget + 2
         self.min_nests = 0 if self.target < 0.3 else 1 if self.target < 0.6 else 2 if self.target < 0.85 else 3
@@ -119,12 +127,18 @@ class RoomCSP:
             templates = [BY_NAME['landing']]
         elif i == self.exit_cell:
             templates = [BY_NAME['beacon']]
+            if self.boss_cell is not None:
+                door_sets = [frozenset({self.side_between(i, self.boss_cell)})]
             if impossible:
                 # A sealed beacon room (no doors) contradicts "every room has a
                 # door", so the domain is empty and no map can exist.
                 door_sets = [d for d in door_sets if not d]
+        elif i == self.boss_cell:
+            templates = [BY_NAME['lair']]
+            toward_exit = self.side_between(i, self.exit_cell)
+            door_sets = [d for d in door_sets if toward_exit in d]
         else:
-            templates = [t for t in TEMPLATES if t.kind not in ('start', 'exit')]
+            templates = [t for t in TEMPLATES if t.kind not in ('start', 'exit', 'boss')]
         return [Room(t, d) for t in templates for d in door_sets]
 
     # ---- constraints ------------------------------------------------------------
@@ -329,6 +343,9 @@ def _furnish(room, rng):
         marks[(2, 7)] = 'N'; marks[(7, 2)] = 'N'
         for x, y in ((2, 2), (3, 2), (2, 3), (6, 7), (7, 7)):
             marks[(x, y)] = '~'
+    elif name == 'lair':
+        marks[(2, 2)] = 'a'; marks[(7, 7)] = 'a'          # ammo for the boss fight
+        marks[(2, 7)] = 'p'; marks[(7, 2)] = 'p'          # cover
     return marks
 
 
@@ -356,6 +373,18 @@ def compile_rooms(rooms, rows, cols, seed=0) -> ExpeditionMap:
                 exit_ = (ox + x, oy + y)
             elif mark == 'N':
                 nests.append((ox + x, oy + y))
+    # The beacon room's door into the lair is sealed by a gate until the boss dies.
+    for index, room in enumerate(rooms):
+        if room.template.kind != 'exit' or len(room.doors) != 1:
+            continue
+        side = next(iter(room.doors))
+        r, c = divmod(index, cols)
+        dr, dc = {'N': (-1, 0), 'S': (1, 0), 'E': (0, 1), 'W': (0, -1)}[side]
+        nr, nc = r + dr, c + dc
+        if 0 <= nr < len(rooms) // cols and 0 <= nc < cols and rooms[nr * cols + nc].template.kind == 'boss':
+            for d in DOOR:
+                x, y = {'N': (d, 0), 'S': (d, ROOM - 1), 'W': (0, d), 'E': (ROOM - 1, d)}[side]
+                grid[r * ROOM + y][c * ROOM + x] = 'G'
     total = sum(r.template.difficulty for r in rooms)
     difficulty = min(1.0, total / max(1.0, (rows * cols - 2) * 1.6))
     return ExpeditionMap(tuple(''.join(row) for row in grid), rows, cols, tuple(rooms), seed,
@@ -381,7 +410,7 @@ def corner_cells(rows, cols, corner):
 
 
 def generate_map(seed=42, target=0.5, rows=4, cols=4, forward_checking=True, arc_consistency=True,
-                 attempts=12, impossible=False, corner=None) -> MapResult:
+                 attempts=12, impossible=False, corner=None, boss=False) -> MapResult:
     """Solve the room CSP, compile the tiles and check the beacon is reachable with A*.
 
     The start corner comes from the seed unless `corner` is given; the beacon
@@ -393,7 +422,7 @@ def generate_map(seed=42, target=0.5, rows=4, cols=4, forward_checking=True, arc
     last_csp = last_search = None
     for attempt in range(attempts):
         csp_seed = seed + attempt * 997
-        problem = RoomCSP(rows, cols, target, csp_seed, impossible, start_cell, exit_cell)
+        problem = RoomCSP(rows, cols, target, csp_seed, impossible, start_cell, exit_cell, boss)
         last_csp = problem.solve(forward_checking, arc_consistency)
         if last_csp.rooms is None:
             if last_csp.reason == 'No solution':

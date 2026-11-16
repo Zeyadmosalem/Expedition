@@ -8,7 +8,7 @@ field from the player, Skitters replan with Greedy best-first, Brutes with A*.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from math import hypot, floor, ceil
+from math import hypot, floor, ceil, cos, sin
 from random import Random
 from expedition.rooms import ExpeditionMap, ROOM
 from expedition.search import solve_grid, bfs_distance_field
@@ -17,7 +17,13 @@ ALIENS = {
     'glob':    {'speed': 1.7, 'hp': 3, 'damage': 9, 'radius': 0.32, 'algorithm': 'bfs', 'replan': 0.3},
     'skitter': {'speed': 3.3, 'hp': 1, 'damage': 5, 'radius': 0.25, 'algorithm': 'greedy', 'replan': 0.45},
     'brute':   {'speed': 1.25, 'hp': 9, 'damage': 18, 'radius': 0.42, 'algorithm': 'astar', 'replan': 0.6},
+    'queen':   {'speed': 1.15, 'hp': 60, 'damage': 20, 'radius': 0.62, 'algorithm': 'astar', 'replan': 0.6},
 }
+SPIT_EVERY = 3.0            # the Queen spits a fan of acid this often
+SUMMON_EVERY = 7.0          # ... and calls Skitters this often
+SPIT_SPEED = 7.0
+SPIT_DAMAGE = 10
+MAX_SUMMONED = 6
 DROP_CHANCE = {'glob': 0.2, 'skitter': 0.15, 'brute': 0.7}   # chance a killed alien drops ammo
 DROP_AMMO = 12
 PLAYER_SPEED = 4.2
@@ -75,6 +81,9 @@ class Alien:
     hit_t: float = 0.0
     nest: int | None = None
     heading: tuple = (1.0, 0.0)
+    spit_t: float = 2.5
+    summon_t: float = 5.0
+    summoned: bool = False
 
 
 @dataclass
@@ -113,10 +122,11 @@ class Expedition:
     sounds and effects: ('shot', x, y, weapon), ('hit', x, y), ('kill', x, y, kind),
     ('drop', x, y), ('pickup', x, y, kind), ('hurt', x, y), ('win', ...), ('dead', ...)."""
 
-    def __init__(self, m: ExpeditionMap, seed=42, spawning=True):
+    def __init__(self, m: ExpeditionMap, seed=42, spawning=True, dormant=True):
         self.map = m
         self.rng = Random(seed)
         self.spawning = spawning
+        self.spit = []
         sx, sy = m.start
         self.player = Player(sx + 0.5, sy + 0.5)
         self.aliens: list[Alien] = []
@@ -139,8 +149,25 @@ class Expedition:
         self.exit_field = bfs_distance_field(m.passable, m.exit, m.width, m.height)
         self.route_length = max(1, self.exit_field.get(m.start, 1))
         self._solid = {(x, y) for y in range(m.height) for x in range(m.width) if not m.passable(x, y)}
-        if spawning:
+        # The boss gate is closed (solid) until the Queen dies.
+        self.gate = [(x, y) for y in range(m.height) for x in range(m.width) if m.tile(x, y) == 'G']
+        self._solid |= set(self.gate)
+        self.gate_closed = bool(self.gate)
+        self.boss_max_hp = ALIENS['queen']['hp']
+        self.lair_room = next((i for i, r in enumerate(m.rooms) if r.template.kind == 'boss'), None)
+        if self.lair_room is not None:
+            r, c = divmod(self.lair_room, m.cols)
+            self.spawn('queen', c * ROOM + 4.5, r * ROOM + 4.5, active=False)
+        if spawning and dormant:
             self._place_dormant_aliens()
+
+    @property
+    def boss(self):
+        return next((a for a in self.aliens if a.kind == 'queen'), None)
+
+    def walkable(self, x, y):
+        """Open floor right now (closed gates and nests block)."""
+        return not self.solid(x, y)
 
     # ---- geometry -------------------------------------------------------------------
     def solid(self, x, y):
@@ -220,7 +247,7 @@ class Expedition:
             if alien.replan_in <= 0 or not alien.path:
                 alien.replan_in = ALIENS[alien.kind]['replan']
                 budget = 1500 if alien.algorithm == 'greedy' else 2500
-                result = solve_grid(self.map.passable, self.tile_of(alien), self.tile_of(p),
+                result = solve_grid(self.walkable, self.tile_of(alien), self.tile_of(p),
                                     alien.algorithm, budget, trace_limit=0)
                 alien.path = list(result.path[1:]) if result.found else []
             while alien.path and hypot(alien.path[0][0] + 0.5 - alien.x, alien.path[0][1] + 0.5 - alien.y) < 0.15:
@@ -254,6 +281,7 @@ class Expedition:
             p.aim = (ax / alen, ay / alen)
         self._weapon(dt, shoot, reload, events)
         self._bullets(dt, events)
+        self._spit(dt, events)
         self._aliens(dt, events)
         self._nests(dt, events)
         self._ground(dt, events)
@@ -338,7 +366,14 @@ class Expedition:
             if alien.nest is not None:
                 self.nests[alien.nest].alive -= 1
             events.append(('kill', alien.x, alien.y, alien.kind))
-            if self.rng.random() < DROP_CHANCE[alien.kind]:
+            if alien.kind == 'queen':
+                events.append(('boss_down', alien.x, alien.y))
+                if self.gate_closed:
+                    self._solid -= set(self.gate)
+                    self.gate_closed = False
+                    gx, gy = self.gate[0]
+                    events.append(('gate_open', gx + 0.5, gy + 0.5))
+            if self.rng.random() < DROP_CHANCE.get(alien.kind, 0.0):
                 self.pickups.append(Pickup('ammo', alien.x, alien.y, DROP_AMMO))
                 events.append(('drop', alien.x, alien.y))
         self.aliens = survivors
@@ -348,18 +383,25 @@ class Expedition:
         self.field_age += dt
         if self.field_age >= FIELD_REFRESH:
             self.field_age = 0.0
-            self.field = bfs_distance_field(self.map.passable, self.tile_of(p), self.map.width, self.map.height)
-        for alien in self.aliens:
+            self.field = bfs_distance_field(self.walkable, self.tile_of(p), self.map.width, self.map.height)
+        here = self.map.room_index(p.x, p.y)
+        for alien in list(self.aliens):
             alien.hit_t = max(0.0, alien.hit_t - dt)
             alien.cooldown = max(0.0, alien.cooldown - dt)
             if not alien.active:
-                d = self.field.get(self.tile_of(alien))
-                if d is not None and d <= AGGRO_STEPS:
+                if alien.kind == 'queen':
+                    wake = here == self.lair_room           # she waits in her lair
+                else:
+                    d = self.field.get(self.tile_of(alien))
+                    wake = d is not None and d <= AGGRO_STEPS
+                if wake:
                     alien.active = True
                     events.append(('alert', alien.x, alien.y))
                 continue
             if alien.frozen:
                 continue
+            if alien.kind == 'queen':
+                self._queen(alien, dt, events)
             self._steer(alien, dt)
             if hypot(p.x - alien.x, p.y - alien.y) < alien.radius + PLAYER_RADIUS + 0.12 and alien.cooldown <= 0:
                 alien.cooldown = ATTACK_COOLDOWN
@@ -374,6 +416,54 @@ class Expedition:
                     push = (gap - d) / 2 / d
                     self.move_body(a, -dx * push, -dy * push)
                     self.move_body(b, dx * push, dy * push)
+
+    def _queen(self, queen, dt, events):
+        """Boss attacks: a fan of acid aimed at the player, and Skitter reinforcements."""
+        p = self.player
+        queen.spit_t -= dt
+        if queen.spit_t <= 0:
+            queen.spit_t = SPIT_EVERY
+            dx, dy = p.x - queen.x, p.y - queen.y
+            length = hypot(dx, dy) or 1.0
+            dx, dy = dx / length, dy / length
+            for k in range(-2, 3):
+                a = k * 0.22
+                vx = dx * cos(a) - dy * sin(a)
+                vy = dx * sin(a) + dy * cos(a)
+                self.spit.append(Bullet(queen.x + vx * 0.7, queen.y + vy * 0.7, vx * SPIT_SPEED, vy * SPIT_SPEED, 2.0))
+            events.append(('spit', queen.x, queen.y))
+        queen.summon_t -= dt
+        if queen.summon_t <= 0:
+            queen.summon_t = SUMMON_EVERY
+            if sum(a.summoned for a in self.aliens) < MAX_SUMMONED:
+                qx, qy = int(queen.x), int(queen.y)
+                spots = [(qx + dx, qy + dy) for dx in (-2, -1, 1, 2) for dy in (-2, -1, 1, 2)
+                         if self.walkable(qx + dx, qy + dy)]
+                for x, y in self.rng.sample(spots, min(2, len(spots))):
+                    self.spawn('skitter', x + 0.5, y + 0.5).summoned = True
+                events.append(('summon', queen.x, queen.y))
+
+    def _spit(self, dt, events):
+        p = self.player
+        alive = []
+        for s in self.spit:
+            s.life -= dt
+            steps = max(1, ceil(hypot(s.dx, s.dy) * dt / 0.2))
+            gone = False
+            for _ in range(steps):
+                s.x += s.dx * dt / steps; s.y += s.dy * dt / steps
+                if self.solid(int(floor(s.x)), int(floor(s.y))):
+                    events.append(('splash', s.x, s.y))
+                    gone = True
+                    break
+                if hypot(s.x - p.x, s.y - p.y) < PLAYER_RADIUS + 0.15:
+                    p.hp -= SPIT_DAMAGE
+                    events.append(('hurt', p.x, p.y))
+                    gone = True
+                    break
+            if not gone and s.life > 0:
+                alive.append(s)
+        self.spit = alive
 
     def _nests(self, dt, events):
         if not self.spawning:

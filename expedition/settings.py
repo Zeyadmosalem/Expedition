@@ -71,6 +71,22 @@ class Records:
     fastest_clear: float | None = None
     total_kills: int = 0
     runs: int = 0
+    levels_cleared: int = 0        # campaign: the highest level beaten (unlocks the next)
+    best_campaign: float | None = None
+
+    def level_cleared(self, number) -> bool:
+        """Returns True when this unlocks a new level."""
+        if number > self.levels_cleared:
+            self.levels_cleared = number
+            return True
+        return False
+
+    def campaign_finished(self, seconds) -> bool:
+        """Returns True when this is a new best campaign time."""
+        if self.best_campaign is None or seconds < self.best_campaign:
+            self.best_campaign = round(float(seconds), 1)
+            return True
+        return False
 
     @classmethod
     def load(cls):
