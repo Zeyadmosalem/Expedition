@@ -17,12 +17,12 @@ ALIENS = {
     'glob':    {'speed': 1.7, 'hp': 3, 'damage': 9, 'radius': 0.32, 'algorithm': 'bfs', 'replan': 0.3},
     'skitter': {'speed': 3.3, 'hp': 1, 'damage': 5, 'radius': 0.25, 'algorithm': 'greedy', 'replan': 0.45},
     'brute':   {'speed': 1.25, 'hp': 9, 'damage': 18, 'radius': 0.42, 'algorithm': 'astar', 'replan': 0.6},
-    'queen':   {'speed': 1.15, 'hp': 60, 'damage': 20, 'radius': 0.62, 'algorithm': 'astar', 'replan': 0.6},
+    'queen':   {'speed': 1.0, 'hp': 45, 'damage': 14, 'radius': 0.62, 'algorithm': 'astar', 'replan': 0.6},
 }
-SPIT_EVERY = 3.0            # the Queen spits a fan of acid this often
-SUMMON_EVERY = 7.0          # ... and calls Skitters this often
-SPIT_SPEED = 7.0
-SPIT_DAMAGE = 10
+SPIT_EVERY = 3.4            # the Queen spits a fan of acid this often
+SUMMON_EVERY = 8.0          # ... and calls Skitters this often
+SPIT_SPEED = 6.0
+SPIT_DAMAGE = 7
 MAX_SUMMONED = 6
 DROP_CHANCE = {'glob': 0.2, 'skitter': 0.15, 'brute': 0.7}   # chance a killed alien drops ammo
 DROP_AMMO = 12

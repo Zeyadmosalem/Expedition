@@ -344,7 +344,7 @@ def _furnish(room, rng):
         for x, y in ((2, 2), (3, 2), (2, 3), (6, 7), (7, 7)):
             marks[(x, y)] = '~'
     elif name == 'lair':
-        marks[(2, 2)] = 'a'; marks[(7, 7)] = 'a'          # ammo for the boss fight
+        marks[(2, 2)] = 'a'; marks[(7, 7)] = 'h'          # ammo and health for the boss fight
         marks[(2, 7)] = 'p'; marks[(7, 2)] = 'p'          # cover
     return marks
 

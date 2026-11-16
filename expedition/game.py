@@ -10,7 +10,9 @@ from random import Random
 from expedition import pixel_art as art
 from expedition import ui
 from expedition.director import Director
+from expedition.levels import LEVELS, build_map
 from expedition.menus import Menu, settings_screen, HELP
+from expedition.tutorial import Tutorial, STEPS
 from expedition.rooms import ROOM
 from expedition.ui import WIDTH, HEIGHT, PALETTE as P
 from expedition.world import Expedition, RELOAD_TIME, MAG_SIZE
@@ -18,13 +20,21 @@ from expedition.world import Expedition, RELOAD_TIME, MAG_SIZE
 LOW_W, LOW_H = WIDTH // 2, HEIGHT // 2      # world canvas, scaled x2 to the window
 HW, HH = art.TILE_W // 2, art.TILE_H // 2     # half diamond: 16 x 8
 WALL_H, PILLAR_H, CRATE_H = 22, 30, 11
-AMBIENT = (78, 82, 112)                       # light level where no lamp reaches
+THEMES = {      # floor tint, wall (top, left, right, trim), ambient light where no lamp reaches
+    'outpost': {'tint': None, 'wall': ((74, 80, 112), (46, 50, 76), (34, 36, 58), (90, 200, 220)),
+                'ambient': (78, 82, 112)},
+    'hive': {'tint': (60, 96, 80), 'wall': ((62, 92, 72), (40, 62, 48), (30, 46, 36), (140, 230, 120)),
+             'ambient': (70, 92, 82)},
+    'lair': {'tint': (104, 56, 66), 'wall': ((98, 56, 66), (66, 36, 46), (50, 28, 36), (255, 120, 120)),
+             'ambient': (96, 70, 84)},
+}
 ROOM_FLOOR = {'start': (78, 88, 116), 'exit': (60, 98, 116), 'open': (72, 78, 106), 'supply': (86, 82, 102),
               'cover': (70, 76, 102), 'hazard': (62, 84, 84), 'nest': (86, 62, 100)}
 GOO = {'glob': (120, 230, 90), 'skitter': (200, 110, 255), 'brute': (255, 150, 70)}
 SOUND_FOR = {'hit': 'hit', 'kill': 'kill', 'hurt': 'hurt', 'pickup': 'pickup', 'drop': 'drop',
              'reload': 'reload', 'alert': 'alert', 'spawn': 'spawn', 'nest_down': 'nest_down',
-             'win': 'win', 'dead': 'lose'}
+             'win': 'win', 'dead': 'lose', 'spit': 'spawn', 'summon': 'alert', 'boss_down': 'nest_down',
+             'gate_open': 'ui_select', 'splash': 'hit'}
 
 
 def iso(wx, wy):
@@ -39,7 +49,9 @@ def from_screen(dx, dy):
 class Visuals:
     """Pre-rendered floor and block sprites for one map."""
 
-    def __init__(self, pg, m):
+    def __init__(self, pg, m, theme='outpost'):
+        style = THEMES[theme]
+        self.ambient = style['ambient']
         self.ox = m.height * HW + HW
         self.floor = pg.Surface(((m.width + m.height) * HW + 2 * HW, (m.width + m.height) * HH + 2 * HH)).convert()
         self.floor.fill((6, 7, 14))
@@ -50,6 +62,8 @@ class Visuals:
                 t = m.tile(x, y)
                 room = m.rooms[m.room_index(x, y)]
                 base = ROOM_FLOOR.get(room.template.kind, (70, 76, 102))
+                if style['tint'] is not None:
+                    base = ui.mix(base, style['tint'], 0.6)
                 color = tuple(min(255, c + (5 if (x + y) % 2 else 0)) for c in base)
                 cx, cy = self.ox + (x - y) * HW, (x + y) * HH
                 diamond = [(cx, cy), (cx + HW, cy + HH), (cx, cy + 2 * HH), (cx - HW, cy + HH)]
@@ -63,21 +77,23 @@ class Visuals:
                         pg.draw.line(self.floor, tuple(min(255, c + 10) for c in color), (cx - 4, cy + 8), (cx + 4, cy + 8))
                 if t == 'S':
                     pg.draw.polygon(self.floor, (120, 220, 240), diamond, 1)
-                if t in '#cpN':
+                if t in '#cpNG':
                     self.blocks.append((x + y + 1.0, x, y, t))
-        self.wall = art.iso_block(pg, WALL_H, (74, 80, 112), (46, 50, 76), (34, 36, 58), (90, 200, 220))
+        self.wall = art.iso_block(pg, WALL_H, *style['wall'])
+        self.gate = art.iso_block(pg, WALL_H, (255, 96, 128), (196, 44, 80), (150, 32, 64), (255, 210, 225))
+        self.gate.set_alpha(205)
         self.crate = art.iso_block(pg, CRATE_H, (156, 116, 64), (114, 80, 42), (90, 62, 32), (196, 156, 96), rivets=False)
         self.pillar = art.iso_block(pg, PILLAR_H, (116, 124, 156), (72, 78, 106), (58, 62, 88), (255, 206, 110))
-        self.solid = {'#': self.wall, 'c': self.crate, 'p': self.pillar}
+        self.solid = {'#': self.wall, 'c': self.crate, 'p': self.pillar, 'G': self.gate}
         self.faded = {}
         for k, s in self.solid.items():
             self.faded[k] = s.copy()
             self.faded[k].set_alpha(90)
-        self.heights = {'#': WALL_H, 'c': CRATE_H, 'p': PILLAR_H}
+        self.heights = {'#': WALL_H, 'c': CRATE_H, 'p': PILLAR_H, 'G': WALL_H}
 
 
-def run(app):
-    """Play runs until the player leaves. Returns 'title' or 'quit'."""
+def run(app, mode='endless', level=1):
+    """Endless runs, or the campaign from `level`. Returns 'title' or 'quit'."""
     pg = app.pg
     kit = app.kit
     screen = app.screen
@@ -101,24 +117,35 @@ def run(app):
     cone = art.cone_light(pg, 190, 46, (190, 182, 160))
     cone_cache = {}
     toasts = ui.Toasts()
+    campaign = mode == 'campaign'
     director = Director(seed=app.seed, challenge=settings.challenge)
-    run_state = {'cleared': 0, 'kills': 0, 'sector': 0}
+    run_state = {'cleared': 0, 'kills': 0, 'sector': 0, 'level': level, 'campaign_time': 0.0,
+                 'full_campaign': level == 1}
     state = {}
     pause_menu = Menu(kit, [('RESUME', 'resume'), ('SETTINGS', 'settings'), ('QUIT TO MENU', 'quit')], 330)
 
     def now():
         return app.now()
 
-    def new_sector():
-        result = director.next_map()
-        run_state['sector'] += 1
-        m = result.map
-        g = Expedition(m, seed=rng.randrange(1 << 30))
-        state.update(game=g, visuals=Visuals(pg, m), visited=set(), outcome=None, particles=[], decals=[],
-                     flashes=[], alerts=[], shake=0.0, hurt=0.0, muzzle=0.0, new_records=[], fastest=False)
+    def start_map(m, theme, tutorial=False):
+        g = Expedition(m, seed=rng.randrange(1 << 30), dormant=not tutorial)
+        state.update(game=g, visuals=Visuals(pg, m, theme), visited=set(), outcome=None, particles=[], decals=[],
+                     flashes=[], alerts=[], shake=0.0, hurt=0.0, muzzle=0.0, new_records=[], fastest=False,
+                     tutorial=Tutorial(g) if tutorial else None, new_best=False)
         px, py = iso(g.player.x, g.player.y)
         state['cam'] = [px - LOW_W / 2, py - LOW_H / 2]
-        nests = len(m.nests)
+        return g
+
+    def new_sector():
+        if campaign:
+            lv = LEVELS[run_state['level'] - 1]
+            start_map(build_map(lv, rng.randrange(1 << 30)), lv.theme, lv.tutorial)
+            toasts.push(f'LEVEL {lv.number}  //  {lv.name}  //  {lv.subtitle.upper()}', P['cyan'], 3.5, now())
+            return
+        result = director.next_map()
+        run_state['sector'] += 1
+        start_map(result.map, 'outpost')
+        nests = len(result.map.nests)
         toasts.push(f'SECTOR {run_state["sector"]:02}  //  {nests} NEST{"S" if nests != 1 else ""}  //  REACH THE BEACON',
                     P['cyan'], 3.0, now())
 
@@ -128,6 +155,8 @@ def run(app):
 
     def finish_run():
         """Close the run for the records (death, or leaving mid-run)."""
+        if campaign:
+            return 0
         g = state['game']
         kills = run_state['kills'] + (0 if state['outcome'] else g.kills)
         state['new_records'] = records.finish_run(run_state['cleared'], kills)
@@ -135,7 +164,7 @@ def run(app):
         return kills
 
     new_run()
-    show_tips = not settings.seen_tips
+    show_tips = not settings.seen_tips and not state['tutorial']
     tips_until = now() + 9.0
     show_help = False
     paused = False
@@ -195,6 +224,36 @@ def run(app):
                 toasts.push('NEST DESTROYED', P['pink'], 2.0, now())
             elif kind == 'alert':
                 state['alerts'].append([x, y, 0.7])
+            elif kind == 'boss_down':
+                burst(x, y, (255, 120, 200), 60, speed=6, up=110, life=1.3, size=2)
+                state['flashes'].append([x, y, 0.6])
+                shake(9.0)
+                toasts.push('THE QUEEN IS DEAD', P['pink'], 2.5, now())
+            elif kind == 'gate_open':
+                burst(x, y, (255, 150, 180), 30, speed=3, up=80, life=0.9, size=2)
+                toasts.push('THE GATE IS OPEN  //  REACH THE BEACON', P['green'], 3.0, now())
+            elif kind == 'splash':
+                burst(x, y, (140, 255, 110), 5, speed=2, up=30, life=0.3)
+            elif kind == 'win' and not state['outcome'] and campaign:
+                lv = run_state['level']
+                run_state['campaign_time'] += g.time
+                records.total_kills += g.kills
+                records.level_cleared(lv)
+                if lv >= len(LEVELS):
+                    state['outcome'] = 'victory'
+                    if run_state['full_campaign']:
+                        state['new_best'] = records.campaign_finished(run_state['campaign_time'])
+                else:
+                    state['outcome'] = 'win'
+                records.save()
+                if state['tutorial']:
+                    settings.seen_tips = True
+                    settings.save()
+            elif kind == 'dead' and not state['outcome'] and campaign:
+                state['outcome'] = 'dead'
+                records.total_kills += g.kills
+                records.save()
+                burst(x, y, (255, 70, 90), 40, speed=4, up=80, life=1.0, size=2)
             elif kind == 'win' and not state['outcome']:
                 state['outcome'] = 'win'
                 run_state['cleared'] += 1
@@ -255,6 +314,8 @@ def run(app):
         for _, _, kind, obj in drawables:
             if kind == 'block':
                 sx, sy, code, x, y = obj
+                if code == 'G' and not g.gate_closed:
+                    continue
                 if code == 'N':
                     nest = nests.get((x, y))
                     img = sprites.nest
@@ -308,7 +369,7 @@ def run(app):
     def draw_lighting(cam):
         g = state['game']; m = g.map; v = state['visuals']
         cx, cy = cam
-        lightmap.fill(AMBIENT)
+        lightmap.fill(v.ambient)
 
         def add(name, wx, wy, lift=0):
             tex = lights[name]
@@ -329,6 +390,11 @@ def run(app):
             add('muzzle', p.x + ax * 0.6, p.y + ay * 0.6, 10)
         for b in g.bullets:
             add('bullet', b.x, b.y, 10)
+        for s in g.spit:
+            add('acid', s.x, s.y, 8)
+        if g.gate_closed:
+            gx, gy = g.gate[0]
+            add('nest', gx + 0.5, gy + 0.5, 10)
         for x, y in v.acid:
             sx, sy = iso(x + 0.5, y + 0.5)
             if -30 < sx - cx < LOW_W + 30 and -30 < sy - cy < LOW_H + 30:
@@ -353,6 +419,11 @@ def run(app):
             speed = hypot(b.dx, b.dy) or 1
             pg.draw.line(world, (255, 236, 170), (sx, sy),
                          (sx - (b.dx - b.dy) / speed * HW * 0.35, sy - (b.dx + b.dy) / speed * HH * 0.35), 2)
+        for s in g.spit:
+            sx, sy = iso(s.x, s.y)
+            sx -= cx; sy -= cy + 9
+            pg.draw.circle(world, (60, 140, 40), (int(sx), int(sy)), 4)
+            pg.draw.circle(world, (170, 255, 120), (int(sx), int(sy)), 2)
         if state['muzzle'] > 0 and 'gun_tip' in state:
             gx, gy = state['gun_tip']
             pg.draw.circle(world, (255, 230, 150), (gx, gy), 3)
@@ -396,7 +467,8 @@ def run(app):
         g = state['game']; p = g.player
         kit.panel(screen, (16, 12, 470, 58), alpha=215, radius=14)
         kit.glow_text(screen, 'EXPEDITION', (34, 41), P['cyan'], 'h1', 'midleft', strength=110)
-        kit.pill(screen, (232, 41), f'SECTOR {run_state["sector"]:02}', P['text'])
+        kit.pill(screen, (232, 41), f'LEVEL {run_state["level"]}' if campaign else f'SECTOR {run_state["sector"]:02}',
+                 P['text'])
         kit.text(screen, 'KILLS', (290, 22), P['muted'], 'tiny')
         kit.text(screen, f'{run_state["kills"] + (0 if state["outcome"] else g.kills):02}', (290, 34), P['pink'], 'numsm')
         kit.text(screen, 'TIME', (360, 22), P['muted'], 'tiny')
@@ -405,8 +477,28 @@ def run(app):
         kit.text(screen, 'THREAT', (522, 22), P['muted'], 'tiny')
         threat = g.map.difficulty
         kit.bar(screen, (522, 42, 130, 10), threat, ui.mix(P['green'], P['red'], threat), radius=5)
-        kit.text(screen, 'CLEARED', (676, 22), P['muted'], 'tiny')
-        kit.text(screen, f'{run_state["cleared"]}', (676, 34), P['green'], 'numsm')
+        if campaign:
+            kit.text(screen, 'LEVEL', (676, 22), P['muted'], 'tiny')
+            kit.text(screen, f'{run_state["level"]} / {len(LEVELS)}', (676, 34), P['green'], 'numsm')
+        else:
+            kit.text(screen, 'CLEARED', (676, 22), P['muted'], 'tiny')
+            kit.text(screen, f'{run_state["cleared"]}', (676, 34), P['green'], 'numsm')
+        boss = g.boss
+        if boss is not None and boss.active:
+            box = pg.Rect(0, 0, 520, 40)
+            box.midtop = (WIDTH // 2, 80)
+            kit.panel(screen, box, alpha=230, radius=12, border=P['pink'])
+            kit.text(screen, 'THE QUEEN', (box.left + 16, box.centery), P['pink'], 'h3', 'midleft')
+            kit.bar(screen, (box.left + 120, box.centery - 6, box.width - 136, 12), boss.hp / g.boss_max_hp,
+                    P['pink'], radius=6)
+        tut = state['tutorial']
+        if tut is not None and not tut.done:
+            box = pg.Rect(0, 0, 640, 48)
+            box.midtop = (WIDTH // 2, 80)
+            kit.panel(screen, box, alpha=235, radius=14, border=P['gold'])
+            kit.text(screen, f'TRAINING {tut.step + 1}/{len(STEPS)}', (box.left + 18, box.centery), P['gold'], 'h3',
+                     'midleft')
+            kit.text(screen, tut.text, (box.left + 150, box.centery), P['text'], 'body', 'midleft', width=box.width - 170)
         draw_minimap(g, WIDTH - 16 - g.map.cols * 24 - 10, 52)
         kit.panel(screen, (16, HEIGHT - 70, 330, 54), alpha=215, radius=14)
         kit.text(screen, 'HEALTH', (34, HEIGHT - 62), P['muted'], 'tiny')
@@ -447,6 +539,32 @@ def run(app):
     def draw_outcome():
         g = state['game']
         kit.shade(screen, 170)
+        outcome = state['outcome']
+        if campaign:
+            lv = LEVELS[run_state['level'] - 1]
+            if outcome == 'victory':
+                kit.glow_text(screen, 'VICTORY', (WIDTH // 2, HEIGHT // 2 - 90), P['gold'], 'logo', strength=220)
+                kit.text(screen, 'The Queen is dead and the expedition is complete.', (WIDTH // 2, HEIGHT // 2 - 20),
+                         P['text'], 'h2', 'center')
+                if run_state['full_campaign']:
+                    t = run_state['campaign_time']
+                    best = '   //   NEW BEST TIME' if state['new_best'] else ''
+                    kit.text(screen, f'Campaign time {t:.1f}s{best}', (WIDTH // 2, HEIGHT // 2 + 14),
+                             P['gold'] if state['new_best'] else P['muted'], 'h3', 'center')
+                kit.text(screen, 'Enter or click: back to the menu', (WIDTH // 2, HEIGHT // 2 + 70), P['cyan'], 'h3', 'center')
+            elif outcome == 'win':
+                nxt = LEVELS[lv.number]
+                kit.glow_text(screen, 'LEVEL CLEARED', (WIDTH // 2, HEIGHT // 2 - 80), P['green'], 'logo', strength=200)
+                kit.text(screen, f'{g.kills} kills   |   {g.time:.1f}s', (WIDTH // 2, HEIGHT // 2), P['text'], 'h2', 'center')
+                kit.text(screen, f'Next: LEVEL {nxt.number}  //  {nxt.name}', (WIDTH // 2, HEIGHT // 2 + 34),
+                         P['muted'], 'small', 'center')
+                kit.text(screen, 'Enter or click: continue   //   Esc: menu', (WIDTH // 2, HEIGHT // 2 + 80), P['cyan'], 'h3', 'center')
+            else:
+                kit.glow_text(screen, 'YOU DIED', (WIDTH // 2, HEIGHT // 2 - 80), P['red'], 'logo', strength=200)
+                kit.text(screen, f'LEVEL {lv.number}  //  {lv.name}', (WIDTH // 2, HEIGHT // 2), P['text'], 'h2', 'center')
+                kit.text(screen, 'Enter or click: try again on a fresh map   //   Esc: menu',
+                         (WIDTH // 2, HEIGHT // 2 + 60), P['cyan'], 'h3', 'center')
+            return
         if state['outcome'] == 'win':
             kit.glow_text(screen, 'SECTOR CLEARED', (WIDTH // 2, HEIGHT // 2 - 80), P['green'], 'logo', strength=200)
             line = f'{g.kills} kills   |   {g.time:.1f}s' + ('   |   NEW FASTEST CLEAR' if state['fastest'] else '')
@@ -484,13 +602,25 @@ def run(app):
             red.fill((255, 40, 70, int(80 * state['hurt'])))
             screen.blit(red, (0, 0))
         draw_hud()
-        toasts.draw(kit, screen, WIDTH // 2, 84, t)
+        busy_top = state['tutorial'] is not None and not state['tutorial'].done
+        busy_top = busy_top or (state['game'].boss is not None and state['game'].boss.active)
+        toasts.draw(kit, screen, WIDTH // 2, 136 if busy_top else 84, t)
 
     def continue_after_outcome():
-        if state['outcome'] == 'win':
+        """Returns 'title' when the game should leave this screen."""
+        outcome = state['outcome']
+        if campaign:
+            if outcome == 'victory':
+                return 'title'
+            if outcome == 'win':
+                run_state['level'] += 1
+            new_sector()                       # next level, or a fresh map of the same level after a death
+            return None
+        if outcome == 'win':
             new_sector()
         else:
             new_run()
+        return None
 
     reload_pressed = False
     while True:
@@ -528,12 +658,13 @@ def run(app):
                     return 'title'
                 continue
             if event.type == pg.MOUSEBUTTONDOWN and event.button == 1 and state['outcome']:
-                continue_after_outcome()
+                if continue_after_outcome() == 'title':
+                    return 'title'
                 continue
             if event.type != pg.KEYDOWN:
                 continue
             if event.key == pg.K_ESCAPE:
-                if state['outcome'] == 'dead':
+                if state['outcome'] in ('dead', 'victory') or (campaign and state['outcome']):
                     return 'title'
                 if state['outcome'] == 'win':
                     finish_run()
@@ -548,7 +679,8 @@ def run(app):
             elif event.key == pg.K_r:
                 reload_pressed = True
             elif event.key in (pg.K_RETURN, pg.K_KP_ENTER) and state['outcome']:
-                continue_after_outcome()
+                if continue_after_outcome() == 'title':
+                    return 'title'
         g = state['game']
         frozen = paused or show_help or show_tips or bool(state['outcome'])
         keys = pg.key.get_pressed()
@@ -560,7 +692,11 @@ def run(app):
         aim = from_screen(mx / 2 + cam[0] - psx, my / 2 + cam[1] - psy)
         shoot = bool(pg.mouse.get_pressed()[0] or keys[pg.K_SPACE])
         if not frozen:
-            handle(g.update(dt, move=(sx + sy, sy - sx), aim=aim, shoot=shoot, reload=reload_pressed))
+            events = g.update(dt, move=(sx + sy, sy - sx), aim=aim, shoot=shoot, reload=reload_pressed)
+            handle(events)
+            tut = state['tutorial']
+            if tut is not None and tut.update(events, reload_key=reload_pressed) and not tut.done:
+                audio.play('pickup')
         reload_pressed = False
         if show_tips and t > tips_until:
             show_tips = False

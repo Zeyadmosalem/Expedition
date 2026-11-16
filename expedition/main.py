@@ -60,12 +60,17 @@ def run(seed=None, on_start=None):
         if on_start is not None:
             on_start(app)
         screen = 'title'
+        mode, level = 'endless', 1
         while screen != 'quit':
             app.visited.append(screen)
             if screen == 'title':
-                screen = 'game' if title.run(app) == 'play' else 'quit'
+                choice = title.run(app)
+                if choice == 'quit':
+                    screen = 'quit'
+                else:
+                    (mode, level), screen = choice, 'game'
             else:
-                screen = game.run(app)
+                screen = game.run(app, mode, level)
         app.settings.save()
         app.records.save()
     finally:
@@ -78,7 +83,8 @@ def smoke(logfile):
     os.environ['EXPEDITION_HOME'] = tempfile.mkdtemp(prefix='expedition-smoke-')
     import pygame as pg
     frames = [0]
-    script = {10: pg.K_RETURN, 40: pg.K_SPACE, 120: pg.K_ESCAPE, 130: pg.K_ESCAPE,
+    # title: CAMPAIGN -> level 1 (the tutorial), then pause / help / quit to menu
+    script = {10: pg.K_RETURN, 20: pg.K_RETURN, 40: pg.K_SPACE, 120: pg.K_ESCAPE, 130: pg.K_ESCAPE,
               140: pg.K_F1, 150: pg.K_F1, 170: pg.K_ESCAPE, 175: pg.K_DOWN, 176: pg.K_DOWN, 178: pg.K_RETURN}
     real_flip = pg.display.flip
 

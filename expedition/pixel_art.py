@@ -142,6 +142,28 @@ ALIENS = {
          "..oooo.......oooo."],
     ],
 }
+_QUEEN_BODY = [
+    "....y....y....y....y....",
+    "...yUy..yUy..yUy..yUy...",
+    "...vuuvvuuuvvuuuvvuuv...",
+    "..vuuuuuuuuuuuuuuuuuuv..",
+    ".vuuUUuuuuuuuuuuuuUUuuv.",
+    ".vuUyyUuuuyyuuuuUyyUuuv.",
+    "vuuUyyUuuuyyuuuuUyyUuuuv",
+    "vuuuUUuuuuuuuuuuuUUuuuuv",
+    "vuuuuuuuurrrrrruuuuuuuuv",
+    "vuuuuuuurRRRRRRruuuuuuuv",
+    ".vuuuuuuurrrrrruuuuuuuv.",
+    ".vvuuuuuuuuuuuuuuuuuuvv.",
+    "..vvuuuuuuuuuuuuuuuuvv..",
+    "..u.vvuuuuuuuuuuuuvv.u..",
+]
+ALIENS['queen'] = [
+    _QUEEN_BODY + [".u...vvvvvvvvvvvvvv...u.",
+                   "u...u..u..u..u..u..u...u"],
+    _QUEEN_BODY + ["u....vvvvvvvvvvvvvv....u",
+                   ".u..u..u..u..u..u..u..u."],
+]
 NEST = [
     "......vvvvvv......",
     "....vvuuuuuuvv....",
@@ -248,6 +270,8 @@ class Sprites:
         for kind, frames in ALIENS.items():
             for n, rows in enumerate(frames):
                 sprite = grid_sprite(pg, rows, outline=True)
+                if kind == 'queen':          # the boss is drawn at double pixel size
+                    sprite = pg.transform.scale(sprite, (sprite.get_width() * 2, sprite.get_height() * 2))
                 flash = sprite.copy()
                 flash.fill((255, 255, 255, 0), special_flags=pg.BLEND_RGBA_MAX)
                 for facing, img in (('r', sprite), ('l', pg.transform.flip(sprite, True, False))):

@@ -2,15 +2,77 @@
 from __future__ import annotations
 from math import sin
 from expedition import __version__
+from expedition.levels import LEVELS
 from expedition.menus import Menu, settings_screen, HELP
 from expedition.ui import WIDTH, HEIGHT, PALETTE as P
 
 
-def run(app):
-    """Returns 'play' or 'quit'."""
+def campaign_screen(app, draw_background):
+    """Pick a level. Returns its number, None (back) or 'quit'."""
     pg = app.pg
     kit = app.kit
-    menu = Menu(kit, [('PLAY', 'play'), ('SETTINGS', 'settings'), ('HELP', 'help'), ('QUIT', 'quit')], 392)
+    unlocked = min(len(LEVELS), app.records.levels_cleared + 1)
+    selected = unlocked - 1
+    cards = []
+    for n in range(len(LEVELS)):
+        rect = pg.Rect(0, 0, 340, 230)
+        rect.center = (WIDTH // 2 + (n - 1) * 370, 380)
+        cards.append(rect)
+    while True:
+        app.clock.tick(60)
+        t = app.now()
+        for event in pg.event.get():
+            if event.type == pg.QUIT:
+                return 'quit'
+            if event.type == pg.KEYDOWN:
+                if event.key == pg.K_ESCAPE:
+                    return None
+                if event.key in (pg.K_LEFT, pg.K_a, pg.K_UP, pg.K_w):
+                    selected = (selected - 1) % len(LEVELS); app.audio.play('ui_move')
+                elif event.key in (pg.K_RIGHT, pg.K_d, pg.K_DOWN, pg.K_s, pg.K_TAB):
+                    selected = (selected + 1) % len(LEVELS); app.audio.play('ui_move')
+                elif event.key in (pg.K_RETURN, pg.K_KP_ENTER, pg.K_SPACE):
+                    if selected < unlocked:
+                        app.audio.play('ui_select')
+                        return selected + 1
+                    app.audio.play('hit')
+            elif event.type == pg.MOUSEMOTION:
+                for n, rect in enumerate(cards):
+                    if rect.collidepoint(event.pos):
+                        selected = n
+            elif event.type == pg.MOUSEBUTTONDOWN and event.button == 1:
+                for n, rect in enumerate(cards):
+                    if rect.collidepoint(event.pos) and n < unlocked:
+                        app.audio.play('ui_select')
+                        return n + 1
+        draw_background(t)
+        kit.shade(app.screen, 140)
+        kit.glow_text(app.screen, 'CAMPAIGN', (WIDTH // 2, 150), P['cyan'], 'title', strength=140)
+        kit.text(app.screen, 'Three levels: training, the hive, and the Queen', (WIDTH // 2, 192), P['muted'], 'h3', 'center')
+        accents = (P['cyan'], P['green'], P['pink'])
+        for n, (lv, rect) in enumerate(zip(LEVELS, cards)):
+            locked = n >= unlocked
+            active = n == selected
+            kit.panel(app.screen, rect, fill=P['panel_hi'] if active else P['panel'],
+                      border=accents[n] if active else P['line'], radius=16, alpha=245, border_width=2 if active else 1)
+            color = P['dim'] if locked else accents[n]
+            kit.text(app.screen, f'LEVEL {lv.number}', (rect.centerx, rect.top + 26), color, 'h3', 'midtop')
+            kit.text(app.screen, lv.name, (rect.centerx, rect.top + 58), P['dim'] if locked else P['text'], 'h1', 'midtop')
+            kit.text(app.screen, lv.subtitle, (rect.centerx, rect.top + 100), P['muted'], 'small', 'midtop')
+            status = 'LOCKED' if locked else 'CLEARED' if lv.number <= app.records.levels_cleared else 'PLAY'
+            kit.pill(app.screen, (rect.centerx, rect.bottom - 40), status,
+                     P['dim'] if locked else P['green'] if status == 'CLEARED' else P['gold'],
+                     fill=None if locked else (P['green'] if status == 'CLEARED' else P['gold']), height=28, pad=16)
+        kit.chips_row(app.screen, [('Left / Right', 'Choose'), ('Enter', 'Play'), ('Esc', 'Back')], HEIGHT - 60)
+        app.flip()
+
+
+def run(app):
+    """Returns ('campaign', level), ('endless', 1) or 'quit'."""
+    pg = app.pg
+    kit = app.kit
+    menu = Menu(kit, [('CAMPAIGN', 'campaign'), ('ENDLESS', 'endless'), ('SETTINGS', 'settings'), ('HELP', 'help'),
+                      ('QUIT', 'quit')], 380)
     show_help = False
     pg.mouse.set_visible(True)
     app.audio.ambient(True)
@@ -40,9 +102,9 @@ def run(app):
 
     def draw_records():
         r = app.records
-        stats = (('BEST RUN', f'{r.best_run} sector{"s" if r.best_run != 1 else ""}'),
-                 ('MOST KILLS', str(r.most_kills)),
-                 ('FASTEST CLEAR', '--' if r.fastest_clear is None else f'{r.fastest_clear:.1f}s'),
+        stats = (('CAMPAIGN', f'{r.levels_cleared} / {len(LEVELS)} levels'),
+                 ('BEST CAMPAIGN', '--' if r.best_campaign is None else f'{r.best_campaign:.1f}s'),
+                 ('ENDLESS BEST', f'{r.best_run} sector{"s" if r.best_run != 1 else ""}'),
                  ('TOTAL KILLS', str(r.total_kills)))
         for n, (label, value) in enumerate(stats):
             box = pg.Rect(0, 0, 210, 62)
@@ -72,8 +134,15 @@ def run(app):
                     app.apply_fullscreen()
                     continue
             choice = menu.handle(event, app.audio)
-            if choice == 'play':
-                return 'play'
+            if choice == 'endless':
+                return ('endless', 1)
+            if choice == 'campaign':
+                level = campaign_screen(app, draw_background)
+                if level == 'quit':
+                    return 'quit'
+                if level is not None:
+                    return ('campaign', level)
+                continue
             if choice == 'quit':
                 return 'quit'
             if choice == 'help':

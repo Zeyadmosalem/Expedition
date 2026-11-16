@@ -10,7 +10,8 @@ HELP = [
     ('SURVIVE', [('Beacon', 'Reach it to clear the sector'), ('Armory', 'Ammo and health crates'),
                  ('Acid', 'Green floor hurts'), ('Sidearm', 'Unlimited, slow: used when out of ammo')]),
     ('THE ALIENS', [('Glob', 'Slow; follows a shared BFS map to you'), ('Skitter', 'Fast; replans with Greedy search'),
-                    ('Brute', 'Tough; replans with A*, often drops ammo'), ('Nest', 'Spawns aliens; shoot it down')]),
+                    ('Brute', 'Tough; replans with A*, often drops ammo'), ('Nest', 'Spawns aliens; shoot it down'),
+                    ('Queen', "Level 3 boss: spits acid; kill her to open the gate")]),
     ('GAME', [('Esc', 'Pause'), ('F1', 'This help'), ('F11', 'Fullscreen'), ('Enter', 'Continue after a sector')]),
 ]
 

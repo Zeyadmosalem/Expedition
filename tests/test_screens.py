@@ -45,7 +45,7 @@ def test_title_menu_settings_and_quit(monkeypatch):
     from expedition.settings import Settings
     app = make_app()
     # down to SETTINGS, enter, raise volume, toggle shake, back out, quit with Esc
-    drive(monkeypatch, 200, {5: pg.K_DOWN, 6: pg.K_RETURN, 10: pg.K_RIGHT, 12: pg.K_DOWN, 13: pg.K_DOWN,
+    drive(monkeypatch, 200, {4: pg.K_DOWN, 5: pg.K_DOWN, 6: pg.K_RETURN, 10: pg.K_RIGHT, 12: pg.K_DOWN, 13: pg.K_DOWN,
                              14: pg.K_DOWN, 15: pg.K_RETURN, 18: pg.K_ESCAPE, 22: pg.K_F1, 25: pg.K_F1,
                              30: pg.K_ESCAPE})
     assert title.run(app) == 'quit'
@@ -54,11 +54,38 @@ def test_title_menu_settings_and_quit(monkeypatch):
     pg.quit()
 
 
-def test_title_enter_plays(monkeypatch):
+def test_title_campaign_starts_level_one_and_endless_is_second(monkeypatch):
     from expedition import title
     app = make_app()
-    drive(monkeypatch, 60, {5: pg.K_RETURN})
-    assert title.run(app) == 'play'
+    drive(monkeypatch, 60, {5: pg.K_RETURN, 10: pg.K_RETURN})
+    assert title.run(app) == ('campaign', 1)
+    drive(monkeypatch, 60, {5: pg.K_DOWN, 8: pg.K_RETURN})
+    assert title.run(app) == ('endless', 1)
+    pg.quit()
+
+
+def test_locked_levels_cannot_be_started(monkeypatch):
+    from expedition import title
+    app = make_app()
+    # only level 1 is open: moving right to level 2 and pressing Enter does nothing, Esc goes back
+    drive(monkeypatch, 80, {5: pg.K_RETURN, 10: pg.K_RIGHT, 12: pg.K_RETURN, 20: pg.K_ESCAPE, 30: pg.K_ESCAPE})
+    assert title.run(app) == 'quit'
+    pg.quit()
+
+
+def test_campaign_tutorial_draws_and_pause_quits_to_menu(monkeypatch):
+    from expedition import game
+    app = make_app()
+    drive(monkeypatch, 90, {20: pg.K_r, 60: pg.K_ESCAPE, 62: pg.K_DOWN, 63: pg.K_DOWN, 65: pg.K_RETURN})
+    assert game.run(app, 'campaign', 1) == 'title'
+    pg.quit()
+
+
+def test_boss_level_draws(monkeypatch):
+    from expedition import game
+    app = make_app()
+    count = drive(monkeypatch, 90)
+    assert game.run(app, 'campaign', 3) == 'quit' and count[0] >= 90
     pg.quit()
 
 
