@@ -1,6 +1,6 @@
 # Build the Windows app, check it starts, and zip it for sharing.
 #   powershell -ExecutionPolicy Bypass -File build\build.ps1
-param([string]$Version = "1.1.1")
+param([string]$Version = "1.2.0")
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
