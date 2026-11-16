@@ -1,0 +1,11 @@
+[project]
+name = "expedition"
+version = "1.0.0"
+description = "An isometric pixel-art alien shooter with CSP-built maps and search-driven aliens"
+requires-python = ">=3.11"
+dependencies = ["pygame-ce==2.5.8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+filterwarnings = ["ignore:no fast renderer available"]
