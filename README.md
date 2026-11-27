@@ -4,6 +4,10 @@ An isometric pixel-art alien shooter. Fight through sectors of alien-infested ro
 
 ![Expedition](docs/screenshot.png)
 
+## Play in the browser
+
+**[Play the web build →](https://zeyadmosalem.github.io/portfolio/demos/expedition/)** It runs on pygbag/WebAssembly, so the first load takes a few seconds. The Windows build below is smoother.
+
 ## Play (Windows)
 
 1. Download the latest `Expedition-v…-windows.zip` from the [Releases](../../releases) page.
